@@ -60,7 +60,52 @@ sudo systemctl enable --now supercamera.service
 |---|---|
 | `http://<host>:8080/` | HTMLビューア |
 | `http://<host>:8080/stream` | MJPEGストリーム (multipart/x-mixed-replace) — VLC / Home Assistant対応 |
+| `http://<host>:8080/stream.raw` | 連続JPEGストリーム (multipartなし) — ffmpeg用 |
 | `http://<host>:8080/snapshot` | 単一JPEGフレーム |
+
+## UniFi Protect統合 (RTSP Bridge)
+
+MJPEGストリームをH.264 RTSPに変換し、ONVIFブリッジ経由でUniFi Protectにthird-partyカメラとして登録する構成。
+
+### 構成要素
+
+| コンポーネント | 役割 |
+|---|---|
+| `supercamera.service` | MJPEG HTTPサーバー (port 8080) |
+| `supercamera-rtsp.service` | ffmpegでMJPEG→H.264 RTSP変換 (port 8556) |
+| `supercamera-protect.service` | ONVIFブリッジ (WS-Discovery + SOAP API, port 8089) + MediaMTX |
+
+### セットアップ手順
+
+```bash
+# 1. ffmpeg + MediaMTX
+sudo apt-get install ffmpeg
+# MediaMTXバイナリを配置 (https://github.com/bluenviron/mediamtx/releases)
+
+# 2. ONVIFブリッジ (Node.js)
+# action4-protectのブリッジ実装を流用:
+#   dist/src/ をコピーし、環境変数でカメラ情報を設定
+#   CAMERA_ID=supercamera CAMERA_NAME=SuperCamera
+#   CAMERA_RTSP_URL=rtsp://127.0.0.1:8556/supercamera
+#   CAMERA_PORT=8089 HOST_IP=<LAN IP> RTSP_HOST=<LAN IP> RTSP_STREAM_PORT=8556
+
+# 3. ffmpeg変換 (multipart形式が安定)
+ffmpeg -f mjpeg -i http://127.0.0.1:8080/stream \
+  -c:v libx264 -preset ultrafast -tune zerolatency -profile:v high \
+  -pix_fmt yuv420p -r 17 -g 17 -bf 0 -b:v 2000k \
+  -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8556/supercamera
+
+# 4. UniFi Protect DBにカメラ登録 (macvlan環境)
+#    Protectコンテナから到達可能なIPでONVIFブリッジを公開する
+#    (macvlanの場合はunifi-shim等のホストIPエイリアスが必要)
+```
+
+### 落とし穴 (UniFi Protect)
+
+- **macvlanネットワークではホストのeth0 IPに到達できない** — Protectコンテナと同じネットワークから到達可能なIP (unifi-shim等) でブリッジを公開すること
+- **`/stream.raw`はffmpegのMJPEGデコーダでエラーが出る** — multipart形式の`/stream`を使うと安定する
+- snapshotはthird-partyカメラでは取得不可 (既知の制限、Action4も同じ)
+- ChangeVideoSettingsの"No response"警告は全third-partyカメラ共通の既知挙動で、録画には影響しない
 
 ## 落とし穴
 
