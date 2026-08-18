@@ -1,0 +1,14 @@
+[Unit]
+Description=Periscope Camera MJPEG Server (3301:2001)
+After=network.target
+
+[Service]
+Type=simple
+User=Kan
+WorkingDirectory=/home/Kan
+ExecStart=/home/Kan/supercamera_server 8080
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

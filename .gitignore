@@ -1,0 +1,9 @@
+# Build artifacts
+supercamera_server
+supercamera_capture
+pics/
+*.o
+
+# Editor/OS
+.DS_Store
+*.swp
