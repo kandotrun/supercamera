@@ -4,9 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=Kan
-WorkingDirectory=/home/Kan
-ExecStart=/home/Kan/supercamera_server 8080
+# デプロイ先のユーザー/パスに合わせて変更すること
+User=kan
+WorkingDirectory=/home/kan
+ExecStart=/home/kan/supercamera_server 8080
 Restart=always
 RestartSec=5
 
