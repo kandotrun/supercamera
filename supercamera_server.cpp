@@ -421,6 +421,36 @@ static void handle_client(int fd) {
         send_all(fd, resp);
         send_all(fd, reinterpret_cast<const char *>(frame.data()), frame.size());
         close(fd);
+    } else if (path == "/stream.raw") {
+        /* Raw MJPEG stream: consecutive JPEG frames with no multipart framing.
+         * ffmpeg can consume this with: ffmpeg -f mjpeg -i http://host:8080/stream.raw ... */
+        std::string resp = "HTTP/1.1 200 OK\r\n"
+                           "Content-Type: video/x-mjpeg\r\n"
+                           "Cache-Control: no-store\r\n"
+                           "Connection: keep-alive\r\n\r\n";
+        send_all(fd, resp);
+
+        uint32_t last_count = 0;
+        struct timeval tv;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+        while (!exit_program) {
+            byteVector frame;
+            uint32_t count;
+            {
+                std::lock_guard lock(frame_mtx);
+                frame = latest_frame;
+                count = frame_count.load();
+            }
+            if (!frame.empty() && count != last_count) {
+                last_count = count;
+                send_all(fd, reinterpret_cast<const char *>(frame.data()), frame.size());
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        }
+        close(fd);
     } else if (path == "/stream") {
         std::string resp = "HTTP/1.1 200 OK\r\n"
                            "Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
