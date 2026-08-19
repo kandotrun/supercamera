@@ -1,12 +1,16 @@
 # SuperCamera
 
-Tools for using a Usee Plus protocol USB endoscope/periscope camera (`3301:2001 Geek szitman supercamera`) without its proprietary app.
+Use a Usee Plus protocol USB endoscope/periscope camera (`3301:2001 Geek szitman supercamera`) without its proprietary app.
 
-Reads frames directly over USB and serves them as an MJPEG HTTP stream. Works with VLC, browsers, Home Assistant, and ffmpeg — and with an RTSP conversion step, it can be registered in UniFi Protect as a third-party camera.
+This camera does not use UVC — it speaks a proprietary USB bulk protocol, so it is invisible to standard OS camera APIs (V4L2, etc.) and only works with the vendor app. This repository implements the protocol directly and turns the camera into a standard MJPEG HTTP stream that works anywhere: any Linux box, a NAS, a Raspberry Pi, or a container.
 
-## Why the proprietary app was required
+## What you can do with it
 
-This camera does not use UVC. It speaks a **proprietary USB bulk protocol** (Usee Plus / com.useeplus.protocol), so it is invisible to standard OS camera APIs (V4L2, etc.). The vendor app talks this protocol directly. This repository implements the protocol and converts it into a standard MJPEG stream.
+- **Live view in a browser** — open `http://<host>:8080/`
+- **VLC / mpv** — open `http://<host>:8080/stream` as a network stream
+- **Home Assistant** — add it as an MJPEG camera
+- **ffmpeg** — transcode to H.264/RTSP for NVRs (see [NVR integration](#nvr-integration-rtsp))
+- **Snapshots** — `http://<host>:8080/snapshot` returns a single JPEG frame
 
 ## Quick start
 
@@ -72,9 +76,9 @@ Protocol specification reverse-engineered from raw USB dumps.
 - A short packet (<1024B) alone is not a reliable frame boundary
 - The first frame is corrupted — skipping it is mandatory
 
-## UniFi Protect integration (RTSP Bridge)
+## NVR integration (RTSP)
 
-Converts the MJPEG stream to H.264 RTSP and registers it in UniFi Protect as a third-party camera via an ONVIF bridge.
+The MJPEG stream can be transcoded to H.264 RTSP with ffmpeg and fed to any NVR that supports RTSP or ONVIF. The setup below uses UniFi Protect as an example.
 
 ```
 supercamera.service (MJPEG :8080)

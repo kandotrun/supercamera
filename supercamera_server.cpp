@@ -352,7 +352,7 @@ a { color: #4af; }
 </style>
 </head>
 <body>
-<h1>🔭 Periscope Camera (NAS)</h1>
+<h1>🔭 Periscope Camera</h1>
 <img src="/stream" alt="Live stream">
 <div class="info">MJPEG stream · <a href="/snapshot">snapshot</a> · <a href="/stream">direct stream URL</a></div>
 </body>
