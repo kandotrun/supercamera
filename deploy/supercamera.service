@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-# デプロイ先のユーザー/パスに合わせて変更すること
+# Adjust to the target user/path
 User=kan
 WorkingDirectory=/home/kan
 ExecStart=/home/kan/supercamera_server 8080
