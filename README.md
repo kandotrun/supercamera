@@ -1,34 +1,34 @@
 # SuperCamera
 
-Usee PlusプロトコルのUSB内視鏡/ペリスコープカメラ（`3301:2001 Geek szitman supercamera`）を、専用アプリなしで使うためのツール群。
+Tools for using a Usee Plus protocol USB endoscope/periscope camera (`3301:2001 Geek szitman supercamera`) without its proprietary app.
 
-USBから直接フレームを読み取り、MJPEG HTTPストリームとして公開します。VLC・ブラウザ・Home Assistant・ffmpegから利用でき、RTSP変換を挟めばUniFi Protectにもthird-partyカメラとして登録できます。
+Reads frames directly over USB and serves them as an MJPEG HTTP stream. Works with VLC, browsers, Home Assistant, and ffmpeg — and with an RTSP conversion step, it can be registered in UniFi Protect as a third-party camera.
 
-## なぜ専用アプリが必要だったのか
+## Why the proprietary app was required
 
-このカメラはUVCではなく**独自USB bulkプロトコル**（Usee Plus / com.useeplus.protocol）で通信します。OS標準のカメラAPI（V4L2等）からは見えないため、専用アプリが必須でした。本リポジトリはこのプロトコルを直接実装し、標準的なMJPEGストリームに変換します。
+This camera does not use UVC. It speaks a **proprietary USB bulk protocol** (Usee Plus / com.useeplus.protocol), so it is invisible to standard OS camera APIs (V4L2, etc.). The vendor app talks this protocol directly. This repository implements the protocol and converts it into a standard MJPEG stream.
 
-## クイックスタート
+## Quick start
 
 ```bash
-# 依存関係
+# Dependencies
 sudo apt-get install build-essential libusb-1.0-0-dev
 
-# ビルド
+# Build
 g++ -std=c++20 -O2 -o supercamera_server supercamera_server.cpp -lusb-1.0 -pthread
 g++ -std=c++20 -O2 -o supercamera_capture supercamera_capture.cpp -lusb-1.0 -pthread
 
-# USB権限 (udev)
+# USB permissions (udev)
 sudo cp deploy/99-supercamera.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 
-# 起動
+# Run
 ./supercamera_server 8080
 ```
 
-ブラウザで `http://<host>:8080/` を開くとライブビューが表示されます。
+Open `http://<host>:8080/` in a browser for the live view.
 
-### systemdサービスとして常駐させる場合
+### Running as a systemd service
 
 ```bash
 sudo cp deploy/supercamera.service /etc/systemd/system/
@@ -36,102 +36,102 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now supercamera.service
 ```
 
-> `deploy/supercamera.service` の `User=` / `WorkingDirectory=` / `ExecStart=` は環境に合わせて変更してください。
+> Adjust `User=`, `WorkingDirectory=`, and `ExecStart=` in `deploy/supercamera.service` to match your environment.
 
-## エンドポイント
+## Endpoints
 
-| URL | 説明 |
+| URL | Description |
 |---|---|
-| `http://<host>:8080/` | HTMLビューア |
-| `http://<host>:8080/stream` | MJPEGストリーム (multipart/x-mixed-replace) — VLC / Home Assistant / ffmpeg対応 |
-| `http://<host>:8080/stream.raw` | 連続JPEGストリーム (multipartなし) |
-| `http://<host>:8080/snapshot` | 単一JPEGフレーム |
+| `http://<host>:8080/` | HTML viewer |
+| `http://<host>:8080/stream` | MJPEG stream (multipart/x-mixed-replace) — VLC / Home Assistant / ffmpeg |
+| `http://<host>:8080/stream.raw` | Consecutive JPEG stream (no multipart framing) |
+| `http://<host>:8080/snapshot` | Single JPEG frame |
 
-## プロトコル解析
+## Protocol analysis
 
-raw USB dumpの解析で特定したプロトコル仕様です。
+Protocol specification reverse-engineered from raw USB dumps.
 
-- **VID:PID**: `3301:2001`、Interface 0 (EP 0x01/0x81) + Interface 1 (EP 0x02/0x82)
-- **初期化シーケンス**:
+- **VID:PID**: `3301:2001`, Interface 0 (EP 0x01/0x81) + Interface 1 (EP 0x02/0x82)
+- **Init sequence**:
   1. MFi probe `FF 55 FF 55 EE 10` → EP1 (0x01)
   2. Open stream `BB AA 05 00 00` → EP2 (0x02)
-  3. Video read → EP2 (0x82)、1024B bulk転送
-- **USB転送 = 1024B = 512Bブロック×2**
-- 各512Bブロック: **12Bヘッダ + 500B JPEGデータ**
-  - ヘッダ: `aa bb 07 fb 01` + fid(1B) + cam_num(1B) + cont(1B) + meta(4B)
-- **フレーム境界 = EOI (FF D9)** — JPEGのバイトスタッフィング規則によりエントロピーデータ内にFF D9は出現しないため、EOI検出は正確
-- EOI後は次のフレームのヘッダが0-3Bのパディングを挟んで開始
-- 起動直後の最初のフレーム (fid=0) は不完全 — スキップする
-- 解像度: 1280x720 JPEG、約15-17fps、フレームサイズ約17-23KB
+  3. Video read → EP2 (0x82), 1024-byte bulk transfers
+- **USB transfer = 1024B = 2 × 512B blocks**
+- Each 512B block: **12B header + 500B JPEG data**
+  - Header: `aa bb 07 fb 01` + fid(1B) + cam_num(1B) + cont(1B) + meta(4B)
+- **Frame boundary = EOI (FF D9)** — JPEG byte-stuffing rules guarantee FF D9 never appears inside entropy-coded data, so EOI detection is exact
+- After EOI, the next frame's header starts after 0-3 bytes of padding
+- The first frame after device startup (fid=0) is incomplete — skip it
+- Resolution: 1280x720 JPEG, ~15-17 fps, frame size ~17-23 KB
 
-### 落とし穴
+### Pitfalls
 
-- **EP配置は機種で異なる**: 既知の別機種 (2CE3:3828) は全通信EP1だが、3301:2001はMFi→EP1、open+video→EP2。動かない場合はraw dumpで確認すること
-- **lengthフィールド (0x01fb=507) はパケットサイズと不整合** — 無視して全バイトを使う
-- **cam_numはフレーム境界ではない** (後続フレームでは全パケット0)
-- ショートパケット (<1024B) 単独ではフレーム境界として信頼できない
-- 最初のフレームは壊れている — スキップ必須
+- **Endpoint layout varies by model**: a known sibling model (2CE3:3828) uses EP1 for everything, but the 3301:2001 uses EP1 for MFi and EP2 for open+video. If it doesn't work, capture a raw dump and check.
+- **The length field (0x01fb=507) is inconsistent with the packet size** — ignore it and use all bytes
+- **cam_num is not a frame boundary** (it is 0 in all packets of subsequent frames)
+- A short packet (<1024B) alone is not a reliable frame boundary
+- The first frame is corrupted — skipping it is mandatory
 
-## UniFi Protect統合 (RTSP Bridge)
+## UniFi Protect integration (RTSP Bridge)
 
-MJPEGストリームをH.264 RTSPに変換し、ONVIFブリッジ経由でUniFi Protectにthird-partyカメラとして登録する構成です。
+Converts the MJPEG stream to H.264 RTSP and registers it in UniFi Protect as a third-party camera via an ONVIF bridge.
 
 ```
 supercamera.service (MJPEG :8080)
   → ffmpeg (MJPEG→H.264 RTSP :8556)
-  → ONVIFブリッジ (WS-Discovery + SOAP :8089) + MediaMTX
-  → UniFi Protect「RTSP Bridge SuperCamera」
+  → ONVIF bridge (WS-Discovery + SOAP :8089) + MediaMTX
+  → UniFi Protect "RTSP Bridge SuperCamera"
 ```
 
-### 構成要素
+### Components
 
-| コンポーネント | 役割 |
+| Component | Role |
 |---|---|
-| `supercamera.service` | MJPEG HTTPサーバー (port 8080) |
-| `supercamera-rtsp.service` | ffmpegでMJPEG→H.264 RTSP変換 (port 8556) |
-| `supercamera-protect.service` | ONVIFブリッジ (WS-Discovery + SOAP API, port 8089) + MediaMTX |
+| `supercamera.service` | MJPEG HTTP server (port 8080) |
+| `supercamera-rtsp.service` | ffmpeg MJPEG→H.264 RTSP transcoder (port 8556) |
+| `supercamera-protect.service` | ONVIF bridge (WS-Discovery + SOAP API, port 8089) + MediaMTX |
 
-### セットアップ手順
+### Setup
 
 ```bash
 # 1. ffmpeg + MediaMTX
 sudo apt-get install ffmpeg
-# MediaMTXバイナリを配置 (https://github.com/bluenviron/mediamtx/releases)
+# Place the MediaMTX binary (https://github.com/bluenviron/mediamtx/releases)
 
-# 2. ONVIFブリッジ (Node.js)
-#    action4-protectのブリッジ実装を流用:
-#      dist/src/ をコピーし、環境変数でカメラ情報を設定
+# 2. ONVIF bridge (Node.js)
+#    Reuse the action4-protect bridge implementation:
+#      copy dist/src/ and configure camera info via environment variables
 #      CAMERA_ID=supercamera CAMERA_NAME=SuperCamera
 #      CAMERA_RTSP_URL=rtsp://127.0.0.1:8556/supercamera
 #      CAMERA_PORT=8089 HOST_IP=<LAN IP> RTSP_HOST=<LAN IP> RTSP_STREAM_PORT=8556
 
-# 3. ffmpeg変換 (multipart形式が安定)
+# 3. ffmpeg transcoding (the multipart endpoint is the stable one)
 ffmpeg -f mjpeg -i http://127.0.0.1:8080/stream \
   -c:v libx264 -preset ultrafast -tune zerolatency -profile:v high \
   -pix_fmt yuv420p -r 17 -g 17 -bf 0 -b:v 2000k \
   -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8556/supercamera
 
-# 4. UniFi Protect DBにカメラ登録 (macvlan環境)
-#    Protectコンテナから到達可能なIPでONVIFブリッジを公開する
-#    (macvlanの場合はunifi-shim等のホストIPエイリアスが必要)
+# 4. Register the camera in the UniFi Protect DB (macvlan environments)
+#    Publish the ONVIF bridge on an IP reachable from the Protect container
+#    (with macvlan, a host IP alias such as unifi-shim is required)
 ```
 
-### 落とし穴 (UniFi Protect)
+### Pitfalls (UniFi Protect)
 
-- **macvlanネットワークではホストのeth0 IPに到達できない** — Protectコンテナと同じネットワークから到達可能なIP (unifi-shim等) でブリッジを公開すること
-- **`/stream.raw`はffmpegのMJPEGデコーダでエラーが出る** — multipart形式の`/stream`を使うと安定する
-- snapshotはthird-partyカメラでは取得不可 (既知の制限)
-- ChangeVideoSettingsの"No response"警告は全third-partyカメラ共通の既知挙動で、録画には影響しない
+- **On macvlan networks the host's eth0 IP is unreachable** — publish the bridge on an IP reachable from the Protect container's network (e.g. unifi-shim)
+- **`/stream.raw` triggers errors in ffmpeg's MJPEG decoder** — use the multipart `/stream` endpoint for stability
+- Snapshots are unavailable for third-party cameras (known limitation)
+- The ChangeVideoSettings "No response" warning is a known behavior common to all third-party cameras and does not affect recording
 
-## 構成
+## Files
 
-| ファイル | 説明 |
+| File | Description |
 |---|---|
-| `supercamera_server.cpp` | MJPEG HTTPストリーミングサーバー (port 8080) |
-| `supercamera_capture.cpp` | フレームキャプチャツール (JPEG保存) |
-| `deploy/supercamera.service` | systemdサービス定義 |
-| `deploy/99-supercamera.rules` | udevルール (USB権限 0666) |
+| `supercamera_server.cpp` | MJPEG HTTP streaming server (port 8080) |
+| `supercamera_capture.cpp` | Frame capture tool (saves JPEGs) |
+| `deploy/supercamera.service` | systemd service unit |
+| `deploy/99-supercamera.rules` | udev rule (USB permissions 0666) |
 
 ## License
 
-CC0 — プロトコル解析は [hbens/geek-szitman-supercamera](https://github.com/hbens/geek-szitman-supercamera) (CC0) と [Tibiaworx/usee-plus-camera](https://github.com/Tibiaworx/usee-plus-camera) の知見に基づく。
+CC0 — protocol analysis builds on findings from [hbens/geek-szitman-supercamera](https://github.com/hbens/geek-szitman-supercamera) (CC0) and [Tibiaworx/usee-plus-camera](https://github.com/Tibiaworx/usee-plus-camera).
